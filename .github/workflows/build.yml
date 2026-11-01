@@ -21,11 +21,29 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Get dependencies & patch agora_rtc_engine compileSdk to 36
+      - name: Patch Agora & Android Gradle SDK Settings
         run: |
           rm -f test/widget_test.dart
           flutter pub get
-          find "$HOME/.pub-cache" -name "build.gradle" -exec sed -i 's/compileSdkVersion 3[0-5]/compileSdkVersion 36/g; s/compileSdk 3[0-5]/compileSdk 36/g; s/compileSdk = 3[0-5]/compileSdk = 36/g' {} +
+          echo "" >> android/gradle.properties
+          echo "android.uniquePackageNames=false" >> android/gradle.properties
+          python3 -c '
+          import glob, os, re
+          paths = (
+              glob.glob(os.path.expanduser("~/.pub-cache/**/build.gradle*"), recursive=True)
+              + glob.glob("android/**/build.gradle*", recursive=True)
+          )
+          for p in paths:
+              if os.path.isfile(p):
+                  txt = open(p, encoding="utf-8", errors="ignore").read()
+                  txt = re.sub(r"compileSdkVersion\s+safeExtGet\([^)]+\)", "compileSdkVersion 36", txt)
+                  txt = re.sub(r"compileSdkVersion\s+flutter\.compileSdkVersion", "compileSdkVersion 36", txt)
+                  txt = re.sub(r"compileSdk\s*=\s*flutter\.compileSdkVersion", "compileSdk = 36", txt)
+                  txt = re.sub(r"compileSdkVersion\s+3[0-5]\b", "compileSdkVersion 36", txt)
+                  txt = re.sub(r"compileSdk\s*=\s*3[0-5]\b", "compileSdk = 36", txt)
+                  txt = re.sub(r"compileSdk\s+3[0-5]\b", "compileSdk 36", txt)
+                  open(p, "w", encoding="utf-8").write(txt)
+          '
 
       - name: Build Release APK
         run: flutter build apk --release
@@ -46,16 +64,118 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Regenerate fresh iOS Podfile & set iOS 13.0 target for iPhone 8 Plus
+      - name: Write Complete iOS Podfile, AppDelegate & Configure iOS 13.0 Target
         run: |
           rm -f test/widget_test.dart
-          rm -f ios/Podfile ios/Podfile.lock
+          flutter config --no-enable-swift-package-manager || true
+          rm -rf ios/Pods ios/Podfile.lock
+          cat << 'EOF' > ios/Podfile
+          platform :ios, '13.0'
+
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
+
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+            end
+
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+          end
+
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+          flutter_ios_podfile_setup
+
+          target 'Runner' do
+            use_frameworks!
+            use_modular_headers!
+
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+          end
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+                config.build_settings['ENABLE_BITCODE'] = 'NO'
+                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+              end
+            end
+          end
+          EOF
+          cat << 'EOF' > ios/Runner/AppDelegate.swift
+          import UIKit
+          import Flutter
+          import AVFAudio
+
+          @main
+          @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+            override func application(
+              _ application: UIApplication,
+              didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+            ) -> Bool {
+              configureAudioSessionForFreeFire(preserveStereo: true)
+              return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+            }
+
+            func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+              GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
+              let audioChannel = FlutterMethodChannel(
+                name: "com.squadvoice.ff/audio_session",
+                binaryMessenger: engineBridge.applicationRegistrar.messenger()
+              )
+
+              audioChannel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
+                if call.method == "configureGameAudioSession" {
+                  let args = call.arguments as? [String: Any]
+                  let preserveStereo = args?["preserveGameStereo"] as? Bool ?? true
+                  self?.configureAudioSessionForFreeFire(preserveStereo: preserveStereo)
+                  result(true)
+                } else {
+                  result(FlutterMethodNotImplemented)
+                }
+              }
+            }
+
+            private func configureAudioSessionForFreeFire(preserveStereo: Bool) {
+              let session = AVAudioSession.sharedInstance()
+              do {
+                var options: AVAudioSession.CategoryOptions = [
+                  .mixWithOthers,
+                  .defaultToSpeaker,
+                  .allowBluetooth
+                ]
+                if preserveStereo {
+                  options.insert(.allowBluetoothA2DP)
+                }
+                try session.setCategory(
+                  .playAndRecord,
+                  mode: preserveStereo ? .default : .voiceChat,
+                  options: options
+                )
+                try session.setActive(true)
+              } catch {
+                print("AVAudioSession configuration error: \(error)")
+              }
+            }
+          }
+          EOF
           flutter pub get
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/g' ios/Runner.xcodeproj/project.pbxproj
-          if [ -f ios/Podfile ]; then
-            sed -i '' "s/# platform :ios, '[0-9.]*'/platform :ios, '13.0'/g" ios/Podfile
-            sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '13.0'/g" ios/Podfile
-          fi
 
       - name: Build unsigned iOS App (SideStore / AltStore / Sideloadly)
         run: |

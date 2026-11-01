@@ -1,0 +1,37 @@
+name: Build SquadVoice Android APK & iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-android-and-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      - name: Build unsigned iOS App for iPhone 8 Plus (SideStore / AltStore / Sideloadly)
+        run: |
+          flutter build ios --release --no-codesign
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r SquadVoice_iOS16.ipa Payload
+
+      - name: Upload APK and IPA Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SquadVoice-Builds
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            SquadVoice_iOS16.ipa

@@ -7,7 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 /// Replace with your free Agora App ID from https://console.agora.io
 /// (Includes 10,000 free voice minutes every month for your squad)
-const String kAgoraAppId = 'YOUR_AGORA_APP_ID';
+const String kAgoraAppId = '545448eb8a2f4ba0a7a4d38ec349d4c0';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();

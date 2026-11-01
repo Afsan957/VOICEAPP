@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -21,10 +21,11 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Get dependencies & remove default sample test
+      - name: Get dependencies & patch agora_rtc_engine compileSdk to 36
         run: |
           rm -f test/widget_test.dart
           flutter pub get
+          find "$HOME/.pub-cache" -name "build.gradle" -exec sed -i 's/compileSdkVersion 3[0-5]/compileSdkVersion 36/g; s/compileSdk 3[0-5]/compileSdk 36/g; s/compileSdk = 3[0-5]/compileSdk = 36/g' {} +
 
       - name: Build Release APK
         run: flutter build apk --release
@@ -45,11 +46,16 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Prepare iOS 13+ Deployment Target for iPhone 8 Plus
+      - name: Regenerate fresh iOS Podfile & set iOS 13.0 target for iPhone 8 Plus
         run: |
           rm -f test/widget_test.dart
+          rm -f ios/Podfile ios/Podfile.lock
           flutter pub get
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/g' ios/Runner.xcodeproj/project.pbxproj
+          if [ -f ios/Podfile ]; then
+            sed -i '' "s/# platform :ios, '[0-9.]*'/platform :ios, '13.0'/g" ios/Podfile
+            sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '13.0'/g" ios/Podfile
+          fi
 
       - name: Build unsigned iOS App (SideStore / AltStore / Sideloadly)
         run: |

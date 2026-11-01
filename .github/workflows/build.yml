@@ -3,10 +3,40 @@ name: Build SquadVoice Android APK & iOS IPA
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
 
 jobs:
-  build-android-and-ios:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get dependencies & remove default sample test
+        run: |
+          rm -f test/widget_test.dart
+          flutter pub get
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SquadVoice-Android-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  build-ios:
+    name: Build iPhone 8 Plus iOS IPA
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,23 +45,21 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Install dependencies
-        run: flutter pub get
+      - name: Prepare iOS 13+ Deployment Target for iPhone 8 Plus
+        run: |
+          rm -f test/widget_test.dart
+          flutter pub get
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/g' ios/Runner.xcodeproj/project.pbxproj
 
-      - name: Build Android APK
-        run: flutter build apk --release
-
-      - name: Build unsigned iOS App for iPhone 8 Plus (SideStore / AltStore / Sideloadly)
+      - name: Build unsigned iOS App (SideStore / AltStore / Sideloadly)
         run: |
           flutter build ios --release --no-codesign
           mkdir -p Payload
           cp -r build/ios/iphoneos/Runner.app Payload/
           zip -r SquadVoice_iOS16.ipa Payload
 
-      - name: Upload APK and IPA Artifacts
+      - name: Upload iOS IPA
         uses: actions/upload-artifact@v4
         with:
-          name: SquadVoice-Builds
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            SquadVoice_iOS16.ipa
+          name: SquadVoice-iOS16-IPA
+          path: SquadVoice_iOS16.ipa
